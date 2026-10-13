@@ -5,7 +5,8 @@ import urllib.parse
 import uuid
 from datetime import datetime
 from enum import Enum, auto
-from typing import Dict, List, Optional, Set
+import re
+from typing import Dict, List, Optional, Set, Tuple
 
 
 class ChecksumAlgorithm(Enum):
@@ -103,6 +104,23 @@ RPM_VENDOR_PURL_NAMESPACES = {
 }
 
 
+_HASH_LIKE_REPO_ID = re.compile(r"[0-9a-f]{32,}")
+
+
+def rpm_repository_id(repo_id: str, repo_name: str = "") -> str:
+    """Return the value for the purl repository_id qualifier.
+
+    The DNF repository ID is used as is. Callers such as image-builder pass a
+    content hash as repository ID; in that case the configured repository name
+    (e.g. "BaseOS") is used instead, normalized to a purl-friendly token.
+    """
+    if repo_id and not _HASH_LIKE_REPO_ID.fullmatch(repo_id) and not repo_id.startswith("@"):
+        return repo_id
+    if repo_name:
+        return re.sub(r"[^a-z0-9._]+", "-", repo_name.lower()).strip("-")
+    return ""
+
+
 def purl_rpm_namespace(vendor: str) -> str:
     """Return the purl namespace for an RPM Vendor tag.
 
@@ -134,6 +152,7 @@ class RPMPackage(BasePackage):
         depends_on: Optional[Set["BasePackage"]] = None,
         optional_depends_on: Optional[Set["BasePackage"]] = None,
         repository_url: str = "",
+        repository_id: str = "",
         source_rpm: str = "",
         rpm_provides: Optional[List[RPMDependency]] = None,
         rpm_requires: Optional[List[RPMDependency]] = None,
@@ -159,6 +178,7 @@ class RPMPackage(BasePackage):
         self.architecture = architecture
         self.epoch = epoch
         self.repository_url = repository_url
+        self.repository_id = repository_id
         self.source_rpm = source_rpm
         self.rpm_provides = rpm_provides or []
         self.rpm_requires = rpm_requires or []
@@ -199,11 +219,33 @@ class RPMPackage(BasePackage):
         if self.epoch:
             purl += f"&epoch={self.epoch}"
 
-        if with_repo_url and self.repository_url:
-            # https://github.com/package-url/purl-spec/blob/master/PURL-SPECIFICATION.rst#character-encoding
-            purl += f"&repository_url={urllib.parse.quote(self.repository_url, safe='/:=')}"
+        if with_repo_url and self.repository_id:
+            # Red Hat SBOM guide, "RPM": repositories are identified by the
+            # repository_id qualifier, e.g. repository_id=rhel-9-for-x86_64-baseos-rpms
+            purl += f"&repository_id={urllib.parse.quote(self.repository_id, safe='')}"
 
         return purl
 
     def purl(self) -> str:
         return self._purl()
+
+    def source_rpm_nvr(self) -> Optional[Tuple[str, str, str]]:
+        """Split the source RPM file name (N-V-R.src.rpm) into (name, version, release)."""
+        srpm = self.source_rpm
+        if not srpm or not srpm.endswith(".src.rpm"):
+            return None
+        parts = srpm[:-len(".src.rpm")].rsplit("-", 2)
+        if len(parts) != 3 or not all(parts):
+            return None
+        return parts[0], parts[1], parts[2]
+
+    def source_rpm_purl(self) -> Optional[str]:
+        """purl of the source RPM, as in the Red Hat SBOM guide: pkg:rpm/<ns>/<n>@<v>-<r>?arch=src[&epoch=E]."""
+        nvr = self.source_rpm_nvr()
+        if nvr is None:
+            return None
+        namespace = f"{urllib.parse.quote(purl_rpm_namespace(self.vendor))}/" if self.vendor else ""
+        purl = f"pkg:rpm/{namespace}{nvr[0]}@{nvr[1]}-{nvr[2]}?arch=src"
+        if self.epoch:
+            purl += f"&epoch={self.epoch}"
+        return purl

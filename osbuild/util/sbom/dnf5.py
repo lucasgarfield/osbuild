@@ -97,6 +97,10 @@ def dnf_pkgset_to_sbom_pkgset(dnf_pkgset: List[libdnf5.rpm.Package]) -> List[sbo
                 repo_url = repo_config.get_mirrorlist_option().get_value_string()
             pkg.repository_url = repo_url
 
+        if dnf_pkg.get_repo_id() not in ("@commandline", "@System", "<unknown>"):
+            pkg.repository_id = sbom_model.rpm_repository_id(
+                dnf_pkg.get_repo_id(), dnf_pkg.get_repo().get_config().get_name_option().get_value())
+
         pkg.rpm_provides = [_libdnf5_reldep_to_rpmdependency(r) for r in dnf_pkg.get_provides()]
         pkg.rpm_requires = [_libdnf5_reldep_to_rpmdependency(r) for r in dnf_pkg.get_requires()]
         pkg.rpm_recommends = [_libdnf5_reldep_to_rpmdependency(r) for r in dnf_pkg.get_recommends()]

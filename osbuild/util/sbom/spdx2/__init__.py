@@ -1,6 +1,7 @@
 """Module for creating SPDX spec v2 Software Bill of Materials (SBOM) files."""
 
 from .model import (
+    Annotation,
     Checksum,
     ChecksumAlgorithm,
     CreationInfo,
@@ -19,6 +20,7 @@ from .model import (
 )
 
 __all__ = [
+    "Annotation",
     "Checksum",
     "ChecksumAlgorithm",
     "CreationInfo",

@@ -301,8 +301,12 @@ class Package(EntityWithSpdxId):
         primary_package_purpose: Optional["PrimaryPackagePurpose"] = None,
         supplier: Optional[Union[str, NoAssertionValue]] = None,
         file_name: Optional[str] = None,
+        license_concluded: Optional[Union[str, ExtractedLicensingInfo, NoAssertionValue, NoneValue]] = None,
+        annotations: Optional[List["Annotation"]] = None,
     ) -> None:
         super().__init__(spdx_id)
+        self.license_concluded = license_concluded
+        self.annotations = annotations or []
         self.primary_package_purpose = primary_package_purpose
         self.supplier = supplier
         self.file_name = file_name
@@ -335,6 +339,8 @@ class Package(EntityWithSpdxId):
             d["homepage"] = str(self.homepage)
         if self.source_info:
             d["sourceInfo"] = self.source_info
+        if self.license_concluded:
+            d["licenseConcluded"] = str(self.license_concluded)
         if self.license_declared:
             d["licenseDeclared"] = str(self.license_declared)
         if self.summary:
@@ -351,7 +357,26 @@ class Package(EntityWithSpdxId):
             d["supplier"] = str(self.supplier)
         if self.file_name:
             d["packageFileName"] = self.file_name
+        if self.annotations:
+            d["annotations"] = [a.to_dict() for a in self.annotations]
         return d
+
+
+class Annotation():
+    """Represents an SPDX 2.3 annotation (clause 12), type OTHER."""
+
+    def __init__(self, annotator: str, date: datetime, comment: str) -> None:
+        self.annotator = annotator
+        self.date = date
+        self.comment = comment
+
+    def to_dict(self):
+        return {
+            "annotationType": "OTHER",
+            "annotator": self.annotator,
+            "annotationDate": datetime_to_iso8601(self.date),
+            "comment": self.comment,
+        }
 
 
 class PrimaryPackagePurpose(Enum):
@@ -382,6 +407,7 @@ class RelationshipType(Enum):
     OPTIONAL_DEPENDENCY_OF = auto()
     CONTAINS = auto()
     BUILD_TOOL_OF = auto()
+    GENERATED_FROM = auto()
 
     def __str__(self) -> str:
         return self.name

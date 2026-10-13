@@ -2,6 +2,7 @@ import os
 import re
 from datetime import datetime
 from typing import Dict, List, Optional, Union
+import uuid
 from uuid import uuid4
 
 import osbuild
@@ -209,28 +210,62 @@ def _package_version_info(pkg: sbom_model.BasePackage) -> str:
     return pkg.version
 
 
-def sbom_pkgset_to_spdx2_doc(
+def _source_rpm_package(pkg: sbom_model.BasePackage, srpms: Dict[str, spdx2.Package]) -> Optional[spdx2.Package]:
+    """Return (creating once per document) the SRPM package object for an RPM."""
+    if not isinstance(pkg, sbom_model.RPMPackage):
+        return None
+    purl = pkg.source_rpm_purl()
+    nvr = pkg.source_rpm_nvr()
+    if purl is None or nvr is None:
+        return None
+    if purl not in srpms:
+        srpm = spdx2.Package(
+            spdx_id=f"SPDXRef-SRPM-{uuid.uuid3(uuid.NAMESPACE_URL, purl)}",
+            name=nvr[0],
+            version=f"{nvr[1]}-{nvr[2]}",
+            download_location=spdx2.NoAssertionValue(),
+            files_analyzed=False,
+            license_concluded=spdx2.NoAssertionValue(),
+            file_name=pkg.source_rpm,
+            supplier=f"Organization: {pkg.vendor}" if pkg.vendor else spdx2.NoAssertionValue(),
+            primary_package_purpose=spdx2.PrimaryPackagePurpose.SOURCE,
+            external_references=[spdx2.ExternalPackageRef(
+                category=spdx2.ExternalPackageRefCategory.PACKAGE_MANAGER, reference_type="purl", locator=purl)],
+        )
+        if pkg.homepage:
+            srpm.homepage = pkg.homepage
+        srpms[purl] = srpm
+    return srpms[purl]
+
+
+def sbom_pkgset_to_spdx2_doc(  # pylint: disable=too-many-branches
         pkgset: List[sbom_model.BasePackage],
         license_index_location: Optional[os.PathLike] = None) -> spdx2.Document:
+    """Convert a package set to an SPDX 2.3 document (every binary RPM is DESCRIBED by the document)."""
     doc = create_spdx2_document()
     relationships = []
     license_expr_creator = SpdxLicenseExpressionCreator(license_index_location)
 
-    for pkg in pkgset:
+    tool_creator = str(doc.creation_info.creators[0])
+    srpms: Dict[str, spdx2.Package] = {}
 
-        download_location: Union[str, spdx2.NoAssertionValue] = spdx2.NoAssertionValue()
-        if pkg.download_url:
-            download_location = pkg.download_url
+    for pkg in pkgset:
 
         license_declared = license_expr_creator.ensure_license_expression(pkg.license_declared)
 
         p = spdx2.Package(
             spdx_id=f"SPDXRef-{pkg.uuid()}",
             name=pkg.name,
-            download_location=download_location,
+            # Red Hat SBOM guide, "RPM": downloadLocation of a binary RPM is
+            # NOASSERTION; the file is identified by purl + checksum. The mirror
+            # URL the RPM was fetched from is kept as an annotation.
+            download_location=spdx2.NoAssertionValue(),
             version=_package_version_info(pkg),
             files_analyzed=False,
+            # The RPM License tag is both the declared license and, as in the
+            # Red Hat SBOM guide examples, the license concluded at build time.
             license_declared=license_declared,
+            license_concluded=license_declared,
             external_references=[
                 spdx2.ExternalPackageRef(
                     category=spdx2.ExternalPackageRefCategory.PACKAGE_MANAGER,
@@ -269,7 +304,23 @@ def sbom_pkgset_to_spdx2_doc(
         if pkg.build_date:
             p.built_date = pkg.build_date
 
+        if pkg.download_url:
+            p.annotations.append(spdx2.Annotation(
+                annotator=tool_creator, date=doc.creation_info.created,
+                comment=f"download_url: {pkg.download_url}"))
+
         doc.packages.append(p)
+
+        # Red Hat SBOM guide, "RPM": the source RPM is a separate package and
+        # the binary RPM is GENERATED_FROM it. SRPMs are not installed, so they
+        # are not CONTAINed by (or DESCRIBEd as) the image.
+        srpm = _source_rpm_package(pkg, srpms)
+        if srpm is not None:
+            relationships.append(spdx2.Relationship(
+                spdx_element_id=p.spdx_id,
+                relationship_type=spdx2.RelationshipType.GENERATED_FROM,
+                related_spdx_element_id=srpm.spdx_id,
+            ))
 
         relationships.append(
             spdx2.Relationship(
@@ -297,6 +348,7 @@ def sbom_pkgset_to_spdx2_doc(
                 )
             )
 
+    doc.packages.extend(srpms[k] for k in sorted(srpms))
     doc.relationships = relationships
 
     extracted_license_infos = license_expr_creator.extracted_license_infos()

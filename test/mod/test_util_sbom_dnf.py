@@ -2,6 +2,8 @@ from datetime import datetime
 
 import pytest
 
+import osbuild.util.sbom.model as bom_model
+
 testutil_dnf4 = pytest.importorskip("osbuild.testutil.dnf4")
 sbom_dnf = pytest.importorskip("osbuild.util.sbom.dnf")
 
@@ -30,6 +32,8 @@ def test_dnf_pkgset_to_sbom_pkgset(repo_servers):
 
         assert bom_pkg.download_url == dnf_pkg.remote_location()
         assert bom_pkg.repository_url == dnf_pkg.remote_location()[:-len("/" + dnf_pkg.relativepath)]
+        assert bom_pkg.repository_id == bom_model.rpm_repository_id(dnf_pkg.repo.id, dnf_pkg.repo.name or "")
+        assert bom_pkg.repository_id
 
         assert [dep.name for dep in bom_pkg.rpm_provides] == [dep.name for dep in dnf_pkg.provides]
         assert [dep.name for dep in bom_pkg.rpm_requires] == [dep.name for dep in dnf_pkg.requires]
