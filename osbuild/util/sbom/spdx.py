@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import datetime
 from typing import Dict, List, Optional, Union
 from uuid import uuid4
@@ -12,6 +13,21 @@ try:
 except ImportError:
     get_spdx_licensing = None
     ExpressionError = None
+
+
+# Human-readable texts for LicenseRefs commonly found in Fedora/RHEL RPM License
+# tags (see https://docs.fedoraproject.org/en-US/legal/ and the fedora-license-data
+# project). Unknown refs get a generic text; the ID is what matters for matching.
+KNOWN_LICENSE_REF_TEXTS = {
+    "LicenseRef-Fedora-Public-Domain":
+        "Public domain dedication, as reviewed by Fedora Legal (fedora-license-data).",
+    "LicenseRef-Callaway-Redistributable-no-modification-permitted":
+        "Fedora legacy (Callaway) license: redistributable, no modification permitted (e.g. firmware).",
+    "LicenseRef-Not-Copyrightable":
+        "Material not subject to copyright, as reviewed by Fedora Legal (fedora-license-data).",
+    "LicenseRef-scancode-public-domain":
+        "Public domain (ScanCode license key 'public-domain').",
+}
 
 
 class SpdxLicenseExpressionCreator:
@@ -39,6 +55,29 @@ class SpdxLicenseExpressionCreator:
             raise ValueError("The license-expression package is not available. "
                              "Specify the license index location has no effect.")
 
+    _LICENSE_REF_RE = re.compile(r"LicenseRef-[A-Za-z0-9.\-]+")
+    _LICENSE_REF_PLUS_RE = re.compile(r"LicenseRef-[A-Za-z0-9.\-]+\+?")
+
+    def _register_license_refs(self, expression: str) -> None:
+        """
+        Make sure every LicenseRef-* used inside a license expression is defined.
+
+        SPDX 2.3 (clause 10) requires every LicenseRef used in the document to be
+        declared in hasExtractedLicensingInfos. Fedora license tags legitimately use
+        LicenseRefs (e.g. LicenseRef-Fedora-Public-Domain, LicenseRef-Callaway-*),
+        and license-expression maps some keys to LicenseRef-scancode-*. Without a
+        definition, strict validators (spdx-tools, mobster) reject the document.
+        """
+        for ref in self._LICENSE_REF_RE.findall(expression):
+            if ref in self._extracted_license_infos:
+                continue
+            self._extracted_license_infos[ref] = spdx2.ExtractedLicensingInfo(
+                extracted_text=KNOWN_LICENSE_REF_TEXTS.get(
+                    ref, f"License identifier {ref} as declared in the RPM License tag."),
+                name=ref[len("LicenseRef-"):],
+                license_ref_id=ref,
+            )
+
     def _to_extracted_license_info(self, license_str: str) -> spdx2.ExtractedLicensingInfo:
         eli = spdx2.ExtractedLicensingInfo(license_str)
         return self._extracted_license_infos.setdefault(eli.license_ref_id, eli)
@@ -56,17 +95,47 @@ class SpdxLicenseExpressionCreator:
 
         License strings that are already SPDX license ref IDs are returned as is.
         """
-        if license_str.startswith("LicenseRef-"):
+        if license_str.startswith("LicenseRef-") and self._LICENSE_REF_RE.fullmatch(license_str):
             # The license string is already an SPDX license ref ID.
+            self._register_license_refs(license_str)
             return license_str
 
         if self._spdx_licensing is None:
             return self._to_extracted_license_info(license_str)
 
+        # Fedora/RHEL License tags are SPDX expressions that may use LicenseRef-*
+        # identifiers (e.g. LicenseRef-Callaway-BSD). Keep those verbatim: hide them
+        # behind placeholders so that license-expression neither rejects them as
+        # unknown keys nor rewrites them to aliases (it maps
+        # LicenseRef-Fedora-Public-Domain to LicenseRef-scancode-public-domain).
+        refs: Dict[str, str] = {}
+
+        def _hide(match):
+            placeholder = f"LicenseRef-osbuild-placeholder-{len(refs)}"
+            ref = match.group(0)
+            if ref.endswith("+"):
+                # e.g. Fedora's legacy "LicenseRef-Callaway-LGPLv2+": '+' is not
+                # allowed in a LicenseRef idstring (SPDX 2.3 Annex D), so spell the
+                # "or later" into the identifier.
+                ref = ref[:-1] + "-or-later"
+            refs[placeholder] = ref
+            return placeholder
+
+        hidden = self._LICENSE_REF_PLUS_RE.sub(_hide, license_str)
         try:
-            return str(self._spdx_licensing.parse(license_str, validate=True, strict=True))
+            parsed = self._spdx_licensing.parse(hidden)
+            unknown = [k for k in self._spdx_licensing.unknown_license_keys(parsed) if k not in refs]
+            if parsed is None or unknown:
+                raise ExpressionError(f"Unknown license key(s): {unknown}")
+            # validate the remaining (non-LicenseRef) keys strictly
+            self._spdx_licensing.validate(hidden, strict=True)
         except ExpressionError:
             return self._to_extracted_license_info(license_str)
+        expression = str(parsed)
+        for placeholder in sorted(refs, key=len, reverse=True):
+            expression = expression.replace(placeholder, refs[placeholder])
+        self._register_license_refs(expression)
+        return expression
 
     def extracted_license_infos(self) -> List[spdx2.ExtractedLicensingInfo]:
         """

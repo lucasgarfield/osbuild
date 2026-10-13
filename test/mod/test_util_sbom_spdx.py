@@ -32,7 +32,8 @@ def test_spdxlicenseexpressionfactory_license_expression_availability(licensing_
             assert mocked_licensing is not None
             # The license string should be a SPDX license expression string.
             assert license_expression == "MIT"
-            assert len(lf.extracted_license_infos()) == 0
+            # LicenseRef-123 must be defined in hasExtractedLicensingInfos (SPDX 2.3 clause 10)
+            assert [eli.license_ref_id for eli in lf.extracted_license_infos()] == ["LicenseRef-123"]
         else:
             assert mocked_licensing is None
             # The license string should be wrapped in an ExtractedLicensingInfo,
@@ -40,7 +41,8 @@ def test_spdxlicenseexpressionfactory_license_expression_availability(licensing_
             assert isinstance(license_expression, ExtractedLicensingInfo)
             assert str(license_expression).startswith("LicenseRef-")
             assert license_expression.extracted_text == "MIT"
-            assert len(lf.extracted_license_infos()) == 1
+            # the wrapped "MIT" plus the definition of LicenseRef-123
+            assert len(lf.extracted_license_infos()) == 2
 
 
 @pytest.mark.parametrize("licensing_available", (True, False))
@@ -181,3 +183,39 @@ def test_sbom_pkgset_to_spdx2_doc_rpm_fields():
     assert names["glibc"]["externalRefs"][0]["referenceLocator"].startswith("pkg:rpm/fedora/glibc@2.40-1.fc41")
     assert names["a"]["supplier"] == "NOASSERTION"
     assert [r["relationshipType"] for r in doc["relationships"]] == ["DESCRIBES", "DESCRIBES"]
+
+
+def test_all_license_refs_are_defined():
+    pytest.importorskip("license_expression")
+    # pylint: disable=import-outside-toplevel
+    import re
+
+    from osbuild.util.sbom.model import RPMPackage
+
+    pkgs = [
+        RPMPackage("fw", "1", "1", "noarch", license_declared="LicenseRef-Callaway-Redistributable-no-modification-permitted"),
+        RPMPackage("tz", "1", "1", "noarch", license_declared="LicenseRef-Fedora-Public-Domain AND MIT"),
+        RPMPackage("pd", "1", "1", "noarch", license_declared="LicenseRef-Fedora-Public-Domain"),
+        RPMPackage("old", "1", "1", "noarch", license_declared="GPLv2+ and weird stuff"),
+    ]
+    doc = sbom_pkgset_to_spdx2_doc(pkgs).to_dict()
+    used = set()
+    for p in doc["packages"]:
+        used.update(re.findall(r"LicenseRef-[A-Za-z0-9.\-]+", p["licenseDeclared"]))
+    defined = {eli["licenseId"] for eli in doc["hasExtractedLicensingInfos"]}
+    assert used and used <= defined
+    assert len(defined) == len(doc["hasExtractedLicensingInfos"])  # no duplicates
+
+
+def test_fedora_license_refs_kept_verbatim():
+    pytest.importorskip("license_expression")
+    lf = SpdxLicenseExpressionCreator()
+    # license-expression would alias this to LicenseRef-scancode-public-domain
+    pd = "LicenseRef-Fedora-Public-Domain"
+    assert lf.ensure_license_expression(pd) == pd
+    # unknown-to-scancode Fedora refs inside valid SPDX expressions stay expressions
+    assert lf.ensure_license_expression("mit and LicenseRef-Callaway-BSD") == "MIT AND LicenseRef-Callaway-BSD"
+    # '+' is not valid in a LicenseRef idstring
+    assert lf.ensure_license_expression("LicenseRef-Callaway-LGPLv2+") == "LicenseRef-Callaway-LGPLv2-or-later"
+    assert {eli.license_ref_id for eli in lf.extracted_license_infos()} == {
+        "LicenseRef-Fedora-Public-Domain", "LicenseRef-Callaway-BSD", "LicenseRef-Callaway-LGPLv2-or-later"}

@@ -253,10 +253,11 @@ class ExtractedLicensingInfo():
     https://spdx.github.io/spdx-spec/v2.3/other-licensing-information-detected/
     """
 
-    def __init__(self, extracted_text: str, name: Optional[str] = None) -> None:
+    def __init__(self, extracted_text: str, name: Optional[str] = None,
+                 license_ref_id: Optional[str] = None) -> None:
         self.extracted_text = extracted_text
         self.name = name
-        self.license_ref_id = generate_license_id(self.extracted_text, self.name)
+        self.license_ref_id = license_ref_id or generate_license_id(self.extracted_text, self.name)
 
     def __str__(self):
         return self.license_ref_id
