@@ -82,6 +82,7 @@ class CreationInfo(EntityWithSpdxId):
         creators: List[Creator],
         created: datetime,
         data_license: str = "CC0-1.0",
+        license_list_version: Optional[str] = None,
     ) -> None:
         super().__init__(spdx_id)
 
@@ -97,14 +98,20 @@ class CreationInfo(EntityWithSpdxId):
         self.document_namespace = document_namespace
         self.creators = creators
         self.created = created
+        if license_list_version is not None and not re.fullmatch(r"\d+\.\d+", license_list_version):
+            raise ValueError(f"Invalid license list version '{license_list_version}'")
+        self.license_list_version = license_list_version
 
     def to_dict(self):
+        creation_info = {
+            "created": datetime_to_iso8601(self.created),
+            "creators": [str(creator) for creator in self.creators],
+        }
+        if self.license_list_version:
+            creation_info["licenseListVersion"] = self.license_list_version
         return {
             "SPDXID": self.spdx_id,
-            "creationInfo": {
-                "created": datetime_to_iso8601(self.created),
-                "creators": [str(creator) for creator in self.creators],
-            },
+            "creationInfo": creation_info,
             "dataLicense": self.data_license,
             "name": self.name,
             "spdxVersion": self.spdx_version,
@@ -253,10 +260,11 @@ class ExtractedLicensingInfo():
     https://spdx.github.io/spdx-spec/v2.3/other-licensing-information-detected/
     """
 
-    def __init__(self, extracted_text: str, name: Optional[str] = None) -> None:
+    def __init__(self, extracted_text: str, name: Optional[str] = None,
+                 license_ref_id: Optional[str] = None) -> None:
         self.extracted_text = extracted_text
         self.name = name
-        self.license_ref_id = generate_license_id(self.extracted_text, self.name)
+        self.license_ref_id = license_ref_id or generate_license_id(self.extracted_text, self.name)
 
     def __str__(self):
         return self.license_ref_id
@@ -290,8 +298,18 @@ class Package(EntityWithSpdxId):
         description: Optional[str] = None,
         external_references: Optional[List[ExternalPackageRef]] = None,
         built_date: Optional[datetime] = None,
+        primary_package_purpose: Optional["PrimaryPackagePurpose"] = None,
+        supplier: Optional[Union[str, NoAssertionValue]] = None,
+        file_name: Optional[str] = None,
+        license_concluded: Optional[Union[str, ExtractedLicensingInfo, NoAssertionValue, NoneValue]] = None,
+        annotations: Optional[List["Annotation"]] = None,
     ) -> None:
         super().__init__(spdx_id)
+        self.license_concluded = license_concluded
+        self.annotations = annotations or []
+        self.primary_package_purpose = primary_package_purpose
+        self.supplier = supplier
+        self.file_name = file_name
         self.name = name
         self.download_location = download_location
         self.version = version
@@ -305,7 +323,7 @@ class Package(EntityWithSpdxId):
         self.external_references = external_references or []
         self.built_date = built_date
 
-    def to_dict(self):
+    def to_dict(self):  # pylint: disable=too-many-branches
         d = {
             "SPDXID": self.spdx_id,
             "name": self.name,
@@ -321,6 +339,8 @@ class Package(EntityWithSpdxId):
             d["homepage"] = str(self.homepage)
         if self.source_info:
             d["sourceInfo"] = self.source_info
+        if self.license_concluded:
+            d["licenseConcluded"] = str(self.license_concluded)
         if self.license_declared:
             d["licenseDeclared"] = str(self.license_declared)
         if self.summary:
@@ -331,7 +351,52 @@ class Package(EntityWithSpdxId):
             d["externalRefs"] = [ref.to_dict() for ref in self.external_references]
         if self.built_date:
             d["builtDate"] = datetime_to_iso8601(self.built_date)
+        if self.primary_package_purpose:
+            d["primaryPackagePurpose"] = str(self.primary_package_purpose)
+        if self.supplier:
+            d["supplier"] = str(self.supplier)
+        if self.file_name:
+            d["packageFileName"] = self.file_name
+        if self.annotations:
+            d["annotations"] = [a.to_dict() for a in self.annotations]
         return d
+
+
+class Annotation():
+    """Represents an SPDX 2.3 annotation (clause 12), type OTHER."""
+
+    def __init__(self, annotator: str, date: datetime, comment: str) -> None:
+        self.annotator = annotator
+        self.date = date
+        self.comment = comment
+
+    def to_dict(self):
+        return {
+            "annotationType": "OTHER",
+            "annotator": self.annotator,
+            "annotationDate": datetime_to_iso8601(self.date),
+            "comment": self.comment,
+        }
+
+
+class PrimaryPackagePurpose(Enum):
+    """Enumeration of SPDX 2.3 primaryPackagePurpose values (clause 7.24)."""
+
+    APPLICATION = "APPLICATION"
+    FRAMEWORK = "FRAMEWORK"
+    LIBRARY = "LIBRARY"
+    CONTAINER = "CONTAINER"
+    OPERATING_SYSTEM = "OPERATING_SYSTEM"  # JSON schema spelling (tag-value: OPERATING-SYSTEM)
+    DEVICE = "DEVICE"
+    FIRMWARE = "FIRMWARE"
+    SOURCE = "SOURCE"
+    ARCHIVE = "ARCHIVE"
+    FILE = "FILE"
+    INSTALL = "INSTALL"
+    OTHER = "OTHER"
+
+    def __str__(self) -> str:
+        return self.value
 
 
 class RelationshipType(Enum):
@@ -340,6 +405,9 @@ class RelationshipType(Enum):
     DESCRIBES = auto()
     DEPENDS_ON = auto()
     OPTIONAL_DEPENDENCY_OF = auto()
+    CONTAINS = auto()
+    BUILD_TOOL_OF = auto()
+    GENERATED_FROM = auto()
 
     def __str__(self) -> str:
         return self.name

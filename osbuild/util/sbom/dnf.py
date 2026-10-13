@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 from typing import Dict, List
 
@@ -60,6 +61,7 @@ def dnf_pkgset_to_sbom_pkgset(dnf_pkgset: List[dnf.package.Package]) -> List[sbo
             description=dnf_pkg.description,
             source_rpm=dnf_pkg.sourcerpm,
             homepage=dnf_pkg.url,
+            filename=os.path.basename(dnf_pkg.location),
         )
 
         if dnf_pkg.chksum:
@@ -85,6 +87,8 @@ def dnf_pkgset_to_sbom_pkgset(dnf_pkgset: List[dnf.package.Package]) -> List[sbo
             elif dnf_pkg.repo.mirrorlist:
                 repo_url = dnf_pkg.repo.mirrorlist
             pkg.repository_url = repo_url
+        if dnf_pkg.reponame not in ("@commandline", "@System"):
+            pkg.repository_id = sbom_model.rpm_repository_id(dnf_pkg.repo.id, dnf_pkg.repo.name or "")
 
         pkg.rpm_provides = [_hawkey_reldep_to_rpmdependency(r) for r in dnf_pkg.provides]
         pkg.rpm_requires = [_hawkey_reldep_to_rpmdependency(r) for r in dnf_pkg.requires]

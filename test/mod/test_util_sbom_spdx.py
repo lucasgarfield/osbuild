@@ -32,7 +32,8 @@ def test_spdxlicenseexpressionfactory_license_expression_availability(licensing_
             assert mocked_licensing is not None
             # The license string should be a SPDX license expression string.
             assert license_expression == "MIT"
-            assert len(lf.extracted_license_infos()) == 0
+            # LicenseRef-123 must be defined in hasExtractedLicensingInfos (SPDX 2.3 clause 10)
+            assert [eli.license_ref_id for eli in lf.extracted_license_infos()] == ["LicenseRef-123"]
         else:
             assert mocked_licensing is None
             # The license string should be wrapped in an ExtractedLicensingInfo,
@@ -40,7 +41,8 @@ def test_spdxlicenseexpressionfactory_license_expression_availability(licensing_
             assert isinstance(license_expression, ExtractedLicensingInfo)
             assert str(license_expression).startswith("LicenseRef-")
             assert license_expression.extracted_text == "MIT"
-            assert len(lf.extracted_license_infos()) == 1
+            # the wrapped "MIT" plus the definition of LicenseRef-123
+            assert len(lf.extracted_license_infos()) == 2
 
 
 @pytest.mark.parametrize("licensing_available", (True, False))
@@ -109,13 +111,15 @@ def test_sbom_pkgset_to_spdx2_doc(repo_servers, licensing_available, license_ind
             if not licensing_available and license_index_location:
                 pytest.fail("Expected a ValueError to be raised when the license-expression package is not available.")
 
-        assert len(doc.packages) == len(bom_pkgset)
+        srpm_pkgs = [p for p in doc.packages if p.spdx_id.startswith("SPDXRef-SRPM-")]
+        assert len(doc.packages) == len(bom_pkgset) + len(srpm_pkgs)
         for spdx_pkg, bom_pkg in zip(doc.packages, bom_pkgset):
             assert spdx_pkg.spdx_id == f"SPDXRef-{bom_pkg.uuid()}"
             assert spdx_pkg.name == bom_pkg.name
-            assert spdx_pkg.version == bom_pkg.version
+            assert spdx_pkg.version == f"{bom_pkg.version}-{bom_pkg.release}"
             assert not spdx_pkg.files_analyzed
-            assert spdx_pkg.download_location == bom_pkg.download_url
+            assert str(spdx_pkg.download_location) == "NOASSERTION"
+            assert spdx_pkg.license_concluded == spdx_pkg.license_declared
             assert spdx_pkg.homepage == bom_pkg.homepage
             assert spdx_pkg.summary == bom_pkg.summary
             assert spdx_pkg.description == bom_pkg.description
@@ -165,3 +169,147 @@ def test_sbom_pkgset_to_spdx2_doc(repo_servers, licensing_available, license_ind
         assert len(extracted_licensing_infos) > 0
         assert sorted(extracted_licensing_infos, key=lambda x: x.license_ref_id) == \
             sorted(doc.extracted_licensing_infos, key=lambda x: x.license_ref_id)
+
+
+def test_sbom_pkgset_to_spdx2_doc_rpm_fields():
+    # pylint: disable=import-outside-toplevel
+    from osbuild.util.sbom.model import ChecksumAlgorithm, RPMPackage
+
+    glibc = RPMPackage("glibc", "2.40", "1.fc41", "x86_64", vendor="Fedora Project",
+                       checksums={ChecksumAlgorithm.SHA256: "a" * 64}, filename="glibc-2.40-1.fc41.x86_64.rpm")
+    doc = sbom_pkgset_to_spdx2_doc([glibc, RPMPackage("a", "1", "1", "noarch")]).to_dict()
+    names = {p["name"]: p for p in doc["packages"]}
+    assert names["glibc"]["versionInfo"] == "2.40-1.fc41"
+    assert names["glibc"]["supplier"] == "Organization: Fedora Project"
+    assert names["glibc"]["packageFileName"] == "glibc-2.40-1.fc41.x86_64.rpm"
+    assert names["glibc"]["externalRefs"][0]["referenceLocator"].startswith("pkg:rpm/fedora/glibc@2.40-1.fc41")
+    assert names["a"]["supplier"] == "NOASSERTION"
+    assert [r["relationshipType"] for r in doc["relationships"]] == ["DESCRIBES", "DESCRIBES"]
+
+
+def _rh_guide_doc():
+    # pylint: disable=import-outside-toplevel
+    from osbuild.util.sbom.model import ChecksumAlgorithm, RPMPackage
+
+    glibc = RPMPackage("glibc", "2.40", "1.fc41", "x86_64", vendor="Fedora Project",
+                       checksums={ChecksumAlgorithm.SHA256: "a" * 64}, filename="glibc-2.40-1.fc41.x86_64.rpm",
+                       license_declared="MIT", source_rpm="glibc-2.40-1.fc41.src.rpm",
+                       homepage="https://www.gnu.org/software/glibc/", repository_id="fedora",
+                       download_url="https://mirror.example/glibc-2.40-1.fc41.x86_64.rpm")
+    common = RPMPackage("glibc-common", "2.40", "1.fc41", "x86_64", vendor="Fedora Project",
+                        source_rpm="glibc-2.40-1.fc41.src.rpm", depends_on={glibc})
+    return sbom_pkgset_to_spdx2_doc([glibc, common]).to_dict()
+
+
+def test_red_hat_guide_rpm_layout():
+    """Red Hat SBOM guide, "RPM": binary RPM fields, SRPM package and GENERATED_FROM."""
+    doc = _rh_guide_doc()
+    pkgs = {p["name"] + "/" + p["externalRefs"][0]["referenceLocator"].split("arch=")[1][:3]: p
+            for p in doc["packages"]}
+    glibc = pkgs["glibc/x86"]
+    assert glibc["downloadLocation"] == "NOASSERTION"
+    assert glibc["licenseConcluded"] == "MIT"
+    assert glibc["packageFileName"] == "glibc-2.40-1.fc41.x86_64.rpm"
+    assert glibc["externalRefs"][0]["referenceLocator"] == \
+        "pkg:rpm/fedora/glibc@2.40-1.fc41?arch=x86_64&repository_id=fedora"
+    assert glibc["annotations"][0]["comment"] == "download_url: https://mirror.example/glibc-2.40-1.fc41.x86_64.rpm"
+    assert glibc["annotations"][0]["annotationType"] == "OTHER"
+
+    srpm = pkgs["glibc/src"]
+    assert srpm["SPDXID"].startswith("SPDXRef-SRPM-")
+    assert srpm["versionInfo"] == "2.40-1.fc41"
+    assert srpm["packageFileName"] == "glibc-2.40-1.fc41.src.rpm"
+    assert srpm["downloadLocation"] == "NOASSERTION"
+    assert srpm["homepage"] == "https://www.gnu.org/software/glibc/"
+    assert srpm["externalRefs"][0]["referenceLocator"] == "pkg:rpm/fedora/glibc@2.40-1.fc41?arch=src"
+    assert len(doc["packages"]) == 3  # one SRPM for both binary RPMs
+
+    gen = [r for r in doc["relationships"] if r["relationshipType"] == "GENERATED_FROM"]
+    assert len(gen) == 2 and {r["relatedSpdxElement"] for r in gen} == {srpm["SPDXID"]}
+    # the SRPM is not shipped: it is not DESCRIBED (nor CONTAINED)
+    assert srpm["SPDXID"] not in [r["relatedSpdxElement"] for r in doc["relationships"]
+                                  if r["relationshipType"] in ("DESCRIBES", "CONTAINS")]
+
+
+def test_sbom_pkgset_to_spdx2_doc_flat_layout():
+    # pylint: disable=import-outside-toplevel
+    from osbuild.util.sbom.model import RPMPackage
+
+    doc = sbom_pkgset_to_spdx2_doc([RPMPackage("a", "1", "1", "noarch")]).to_dict()
+    assert [r["relationshipType"] for r in doc["relationships"]] == ["DESCRIBES"]
+    assert "primaryPackagePurpose" not in doc["packages"][0]
+
+
+def test_doc_validates_against_spdx_schema():
+    # pylint: disable=import-outside-toplevel
+    import json
+    import os
+
+    import jsonschema
+
+    schema_path = os.path.join(os.path.dirname(__file__), "..", "data", "spdx", "spdx-schema-v2.3.1.json")
+    with open(schema_path, encoding="utf8") as f:
+        schema = json.load(f)
+    jsonschema.validate(_rh_guide_doc(), schema)
+
+
+def test_all_license_refs_are_defined():
+    pytest.importorskip("license_expression")
+    # pylint: disable=import-outside-toplevel
+    import re
+
+    from osbuild.util.sbom.model import RPMPackage
+
+    pkgs = [
+        RPMPackage("fw", "1", "1", "noarch", license_declared="LicenseRef-Callaway-Redistributable-no-modification-permitted"),
+        RPMPackage("tz", "1", "1", "noarch", license_declared="LicenseRef-Fedora-Public-Domain AND MIT"),
+        RPMPackage("pd", "1", "1", "noarch", license_declared="LicenseRef-Fedora-Public-Domain"),
+        RPMPackage("old", "1", "1", "noarch", license_declared="GPLv2+ and weird stuff"),
+    ]
+    doc = sbom_pkgset_to_spdx2_doc(pkgs).to_dict()
+    used = set()
+    for p in doc["packages"]:
+        used.update(re.findall(r"LicenseRef-[A-Za-z0-9.\-]+", p["licenseDeclared"]))
+    defined = {eli["licenseId"] for eli in doc["hasExtractedLicensingInfos"]}
+    assert used and used <= defined
+    assert len(defined) == len(doc["hasExtractedLicensingInfos"])  # no duplicates
+
+
+def test_fedora_license_refs_kept_verbatim():
+    pytest.importorskip("license_expression")
+    lf = SpdxLicenseExpressionCreator()
+    # license-expression would alias this to LicenseRef-scancode-public-domain
+    pd = "LicenseRef-Fedora-Public-Domain"
+    assert lf.ensure_license_expression(pd) == pd
+    # unknown-to-scancode Fedora refs inside valid SPDX expressions stay expressions
+    assert lf.ensure_license_expression("mit and LicenseRef-Callaway-BSD") == "MIT AND LicenseRef-Callaway-BSD"
+    # '+' is not valid in a LicenseRef idstring
+    assert lf.ensure_license_expression("LicenseRef-Callaway-LGPLv2+") == "LicenseRef-Callaway-LGPLv2-or-later"
+    assert {eli.license_ref_id for eli in lf.extracted_license_infos()} == {
+        "LicenseRef-Fedora-Public-Domain", "LicenseRef-Callaway-BSD", "LicenseRef-Callaway-LGPLv2-or-later"}
+
+
+def test_license_list_version():
+    # pylint: disable=import-outside-toplevel
+    from datetime import datetime
+
+    from osbuild.util.sbom.spdx import spdx_license_list_version
+    from osbuild.util.sbom.spdx2.model import CreationInfo, Creator
+
+    v = spdx_license_list_version()
+    try:
+        import license_expression  # pylint: disable=unused-import,import-outside-toplevel
+    except ImportError:
+        assert v is None
+    else:
+        assert v is not None and v.count(".") == 1
+
+    ci = CreationInfo("SPDX-2.3", "SPDXRef-DOCUMENT", "n", "https://e/n",
+                      [Creator(CreatorType.TOOL, "t")], datetime.now(), license_list_version="3.27")
+    assert ci.to_dict()["creationInfo"]["licenseListVersion"] == "3.27"
+    ci = CreationInfo("SPDX-2.3", "SPDXRef-DOCUMENT", "n", "https://e/n",
+                      [Creator(CreatorType.TOOL, "t")], datetime.now())
+    assert "licenseListVersion" not in ci.to_dict()["creationInfo"]
+    with pytest.raises(ValueError):
+        CreationInfo("SPDX-2.3", "SPDXRef-DOCUMENT", "n", "https://e/n",
+                     [Creator(CreatorType.TOOL, "t")], datetime.now(), license_list_version="v3")

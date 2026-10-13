@@ -1,6 +1,7 @@
 """Module for creating SPDX spec v2 Software Bill of Materials (SBOM) files."""
 
 from .model import (
+    Annotation,
     Checksum,
     ChecksumAlgorithm,
     CreationInfo,
@@ -13,11 +14,13 @@ from .model import (
     NoAssertionValue,
     NoneValue,
     Package,
+    PrimaryPackagePurpose,
     Relationship,
     RelationshipType,
 )
 
 __all__ = [
+    "Annotation",
     "Checksum",
     "ChecksumAlgorithm",
     "CreationInfo",
@@ -30,6 +33,7 @@ __all__ = [
     "NoAssertionValue",
     "NoneValue",
     "Package",
+    "PrimaryPackagePurpose",
     "Relationship",
     "RelationshipType"
 ]
