@@ -219,3 +219,29 @@ def test_fedora_license_refs_kept_verbatim():
     assert lf.ensure_license_expression("LicenseRef-Callaway-LGPLv2+") == "LicenseRef-Callaway-LGPLv2-or-later"
     assert {eli.license_ref_id for eli in lf.extracted_license_infos()} == {
         "LicenseRef-Fedora-Public-Domain", "LicenseRef-Callaway-BSD", "LicenseRef-Callaway-LGPLv2-or-later"}
+
+
+def test_license_list_version():
+    # pylint: disable=import-outside-toplevel
+    from datetime import datetime
+
+    from osbuild.util.sbom.spdx import spdx_license_list_version
+    from osbuild.util.sbom.spdx2.model import CreationInfo, Creator
+
+    v = spdx_license_list_version()
+    try:
+        import license_expression  # pylint: disable=unused-import,import-outside-toplevel
+    except ImportError:
+        assert v is None
+    else:
+        assert v is not None and v.count(".") == 1
+
+    ci = CreationInfo("SPDX-2.3", "SPDXRef-DOCUMENT", "n", "https://e/n",
+                      [Creator(CreatorType.TOOL, "t")], datetime.now(), license_list_version="3.27")
+    assert ci.to_dict()["creationInfo"]["licenseListVersion"] == "3.27"
+    ci = CreationInfo("SPDX-2.3", "SPDXRef-DOCUMENT", "n", "https://e/n",
+                      [Creator(CreatorType.TOOL, "t")], datetime.now())
+    assert "licenseListVersion" not in ci.to_dict()["creationInfo"]
+    with pytest.raises(ValueError):
+        CreationInfo("SPDX-2.3", "SPDXRef-DOCUMENT", "n", "https://e/n",
+                     [Creator(CreatorType.TOOL, "t")], datetime.now(), license_list_version="v3")

@@ -160,6 +160,28 @@ def spdx2_checksum_algorithm(algorithm: sbom_model.ChecksumAlgorithm) -> spdx2.C
     raise ValueError(f"Unknown checksum algorithm: {algorithm}")
 
 
+def spdx_license_list_version() -> Optional[str]:
+    """
+    Return the SPDX License List version that license expressions are validated
+    against (the one bundled with python-license-expression), or None if the
+    library is unavailable or does not record it.
+    """
+    if get_spdx_licensing is None:
+        return None
+    import license_expression  # pylint: disable=import-outside-toplevel
+    about = os.path.join(os.path.dirname(license_expression.__file__), "data", "license_key_index.json.ABOUT")
+    try:
+        with open(about, encoding="utf-8") as f:
+            for line in f:
+                key, _, value = line.partition(":")
+                if key.strip() == "spdx_license_list_version":
+                    value = value.strip()
+                    return value if re.fullmatch(r"\d+\.\d+", value) else None
+    except OSError:
+        pass
+    return None
+
+
 def create_spdx2_document():
     tool = f"osbuild-{osbuild.__version__}"
     doc_name = f"sbom-by-{tool}"
@@ -172,6 +194,7 @@ def create_spdx2_document():
         document_namespace=f"https://osbuild.org/spdxdocs/{doc_name}-{uuid4()}",
         creators=[spdx2.Creator(spdx2.CreatorType.TOOL, tool)],
         created=datetime.now(),
+        license_list_version=spdx_license_list_version(),
     )
     doc = spdx2.Document(ci)
 

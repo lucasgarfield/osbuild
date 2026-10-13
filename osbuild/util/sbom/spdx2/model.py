@@ -82,6 +82,7 @@ class CreationInfo(EntityWithSpdxId):
         creators: List[Creator],
         created: datetime,
         data_license: str = "CC0-1.0",
+        license_list_version: Optional[str] = None,
     ) -> None:
         super().__init__(spdx_id)
 
@@ -97,14 +98,20 @@ class CreationInfo(EntityWithSpdxId):
         self.document_namespace = document_namespace
         self.creators = creators
         self.created = created
+        if license_list_version is not None and not re.fullmatch(r"\d+\.\d+", license_list_version):
+            raise ValueError(f"Invalid license list version '{license_list_version}'")
+        self.license_list_version = license_list_version
 
     def to_dict(self):
+        creation_info = {
+            "created": datetime_to_iso8601(self.created),
+            "creators": [str(creator) for creator in self.creators],
+        }
+        if self.license_list_version:
+            creation_info["licenseListVersion"] = self.license_list_version
         return {
             "SPDXID": self.spdx_id,
-            "creationInfo": {
-                "created": datetime_to_iso8601(self.created),
-                "creators": [str(creator) for creator in self.creators],
-            },
+            "creationInfo": creation_info,
             "dataLicense": self.data_license,
             "name": self.name,
             "spdxVersion": self.spdx_version,
