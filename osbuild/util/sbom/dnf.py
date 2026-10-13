@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 from typing import Dict, List
 
@@ -60,6 +61,7 @@ def dnf_pkgset_to_sbom_pkgset(dnf_pkgset: List[dnf.package.Package]) -> List[sbo
             description=dnf_pkg.description,
             source_rpm=dnf_pkg.sourcerpm,
             homepage=dnf_pkg.url,
+            filename=os.path.basename(dnf_pkg.location),
         )
 
         if dnf_pkg.chksum:

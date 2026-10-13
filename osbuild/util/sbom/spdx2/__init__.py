@@ -13,6 +13,7 @@ from .model import (
     NoAssertionValue,
     NoneValue,
     Package,
+    PrimaryPackagePurpose,
     Relationship,
     RelationshipType,
 )
@@ -30,6 +31,7 @@ __all__ = [
     "NoAssertionValue",
     "NoneValue",
     "Package",
+    "PrimaryPackagePurpose",
     "Relationship",
     "RelationshipType"
 ]

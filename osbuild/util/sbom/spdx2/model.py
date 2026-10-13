@@ -290,8 +290,14 @@ class Package(EntityWithSpdxId):
         description: Optional[str] = None,
         external_references: Optional[List[ExternalPackageRef]] = None,
         built_date: Optional[datetime] = None,
+        primary_package_purpose: Optional["PrimaryPackagePurpose"] = None,
+        supplier: Optional[Union[str, NoAssertionValue]] = None,
+        file_name: Optional[str] = None,
     ) -> None:
         super().__init__(spdx_id)
+        self.primary_package_purpose = primary_package_purpose
+        self.supplier = supplier
+        self.file_name = file_name
         self.name = name
         self.download_location = download_location
         self.version = version
@@ -305,7 +311,7 @@ class Package(EntityWithSpdxId):
         self.external_references = external_references or []
         self.built_date = built_date
 
-    def to_dict(self):
+    def to_dict(self):  # pylint: disable=too-many-branches
         d = {
             "SPDXID": self.spdx_id,
             "name": self.name,
@@ -331,7 +337,33 @@ class Package(EntityWithSpdxId):
             d["externalRefs"] = [ref.to_dict() for ref in self.external_references]
         if self.built_date:
             d["builtDate"] = datetime_to_iso8601(self.built_date)
+        if self.primary_package_purpose:
+            d["primaryPackagePurpose"] = str(self.primary_package_purpose)
+        if self.supplier:
+            d["supplier"] = str(self.supplier)
+        if self.file_name:
+            d["packageFileName"] = self.file_name
         return d
+
+
+class PrimaryPackagePurpose(Enum):
+    """Enumeration of SPDX 2.3 primaryPackagePurpose values (clause 7.24)."""
+
+    APPLICATION = "APPLICATION"
+    FRAMEWORK = "FRAMEWORK"
+    LIBRARY = "LIBRARY"
+    CONTAINER = "CONTAINER"
+    OPERATING_SYSTEM = "OPERATING_SYSTEM"  # JSON schema spelling (tag-value: OPERATING-SYSTEM)
+    DEVICE = "DEVICE"
+    FIRMWARE = "FIRMWARE"
+    SOURCE = "SOURCE"
+    ARCHIVE = "ARCHIVE"
+    FILE = "FILE"
+    INSTALL = "INSTALL"
+    OTHER = "OTHER"
+
+    def __str__(self) -> str:
+        return self.value
 
 
 class RelationshipType(Enum):
@@ -340,6 +372,8 @@ class RelationshipType(Enum):
     DESCRIBES = auto()
     DEPENDS_ON = auto()
     OPTIONAL_DEPENDENCY_OF = auto()
+    CONTAINS = auto()
+    BUILD_TOOL_OF = auto()
 
     def __str__(self) -> str:
         return self.name

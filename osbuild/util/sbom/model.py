@@ -88,6 +88,30 @@ class RPMDependency:
         return f"{self.name} {self.relation} {self.version}"
 
 
+# Map well-known RPM Vendor tags to the purl namespaces conventionally used for
+# them (see purl-spec PURL-TYPES "rpm": e.g. pkg:rpm/fedora/..., pkg:rpm/redhat/...).
+# Red Hat's security data (VEX/CSAF, TPA) matches on these namespaces.
+RPM_VENDOR_PURL_NAMESPACES = {
+    "fedora project": "fedora",
+    "red hat, inc.": "redhat",
+    "centos": "centos",
+    "centos project": "centos",
+    "almalinux": "almalinux",
+    "rocky enterprise software foundation": "rocky",
+    "opensuse": "opensuse",
+    "suse llc <https://www.suse.com/>": "suse",
+}
+
+
+def purl_rpm_namespace(vendor: str) -> str:
+    """Return the purl namespace for an RPM Vendor tag.
+
+    Known vendors are mapped to their conventional namespace. Unknown vendors
+    fall back to the lower-cased vendor string (the previous behaviour).
+    """
+    return RPM_VENDOR_PURL_NAMESPACES.get(vendor.strip().lower(), vendor.lower())
+
+
 class RPMPackage(BasePackage):
     """Represents an RPM package."""
 
@@ -168,7 +192,7 @@ class RPMPackage(BasePackage):
         """
         namespace = ""
         if self.vendor:
-            namespace = f"{urllib.parse.quote(self.vendor.lower())}/"
+            namespace = f"{urllib.parse.quote(purl_rpm_namespace(self.vendor))}/"
 
         purl = f"pkg:rpm/{namespace}{self.name}@{self.version}-{self.release}?arch={self.architecture}"
 

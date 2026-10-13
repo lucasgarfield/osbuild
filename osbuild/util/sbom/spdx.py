@@ -109,6 +109,14 @@ def create_spdx2_document():
     return doc
 
 
+def _package_version_info(pkg: sbom_model.BasePackage) -> str:
+    """versionInfo for a package; for RPMs this is VERSION-RELEASE (as in the purl)."""
+    release = getattr(pkg, "release", None)
+    if release:
+        return f"{pkg.version}-{release}"
+    return pkg.version
+
+
 def sbom_pkgset_to_spdx2_doc(
         pkgset: List[sbom_model.BasePackage],
         license_index_location: Optional[os.PathLike] = None) -> spdx2.Document:
@@ -128,7 +136,7 @@ def sbom_pkgset_to_spdx2_doc(
             spdx_id=f"SPDXRef-{pkg.uuid()}",
             name=pkg.name,
             download_location=download_location,
-            version=pkg.version,
+            version=_package_version_info(pkg),
             files_analyzed=False,
             license_declared=license_declared,
             external_references=[
@@ -142,6 +150,12 @@ def sbom_pkgset_to_spdx2_doc(
 
         if pkg.homepage:
             p.homepage = pkg.homepage
+
+        # SPDX 2.3 7.5 supplier / 7.4 packageFileName; required by the Red Hat
+        # ProdSec SBOM guide (checked by sbomgrader)
+        p.supplier = f"Organization: {pkg.vendor}" if pkg.vendor else spdx2.NoAssertionValue()
+        if pkg.filename:
+            p.file_name = pkg.filename
 
         if pkg.summary:
             p.summary = pkg.summary

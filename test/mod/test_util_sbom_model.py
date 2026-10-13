@@ -29,7 +29,7 @@ def test_rpmpackage_uuid():
     ),
     (
         RPMPackage("PackageA", "1.0.0", "1.fc40", "x86_64", vendor="Fedora Project"),
-        "pkg:rpm/fedora%20project/PackageA@1.0.0-1.fc40?arch=x86_64"
+        "pkg:rpm/fedora/PackageA@1.0.0-1.fc40?arch=x86_64"
     ),
     (
         RPMPackage("PackageA", "1.0.0", "1.el9", "x86_64", vendor="CentOS"),
@@ -37,11 +37,11 @@ def test_rpmpackage_uuid():
     ),
     (
         RPMPackage("PackageA", "1.0.0", "1.el9", "x86_64", vendor="Red Hat, Inc."),
-        "pkg:rpm/red%20hat%2C%20inc./PackageA@1.0.0-1.el9?arch=x86_64"
+        "pkg:rpm/redhat/PackageA@1.0.0-1.el9?arch=x86_64"
     ),
     (
         RPMPackage("PackageA", "1.0.0", "1.fc40", "x86_64", vendor="Fedora Project", repository_url="https://example.org/repo/"),
-        "pkg:rpm/fedora%20project/PackageA@1.0.0-1.fc40?arch=x86_64&repository_url=https://example.org/repo/"
+        "pkg:rpm/fedora/PackageA@1.0.0-1.fc40?arch=x86_64&repository_url=https://example.org/repo/"
     ),
 
 ))

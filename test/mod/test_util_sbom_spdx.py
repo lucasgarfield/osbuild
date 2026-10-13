@@ -113,7 +113,7 @@ def test_sbom_pkgset_to_spdx2_doc(repo_servers, licensing_available, license_ind
         for spdx_pkg, bom_pkg in zip(doc.packages, bom_pkgset):
             assert spdx_pkg.spdx_id == f"SPDXRef-{bom_pkg.uuid()}"
             assert spdx_pkg.name == bom_pkg.name
-            assert spdx_pkg.version == bom_pkg.version
+            assert spdx_pkg.version == f"{bom_pkg.version}-{bom_pkg.release}"
             assert not spdx_pkg.files_analyzed
             assert spdx_pkg.download_location == bom_pkg.download_url
             assert spdx_pkg.homepage == bom_pkg.homepage
@@ -165,3 +165,19 @@ def test_sbom_pkgset_to_spdx2_doc(repo_servers, licensing_available, license_ind
         assert len(extracted_licensing_infos) > 0
         assert sorted(extracted_licensing_infos, key=lambda x: x.license_ref_id) == \
             sorted(doc.extracted_licensing_infos, key=lambda x: x.license_ref_id)
+
+
+def test_sbom_pkgset_to_spdx2_doc_rpm_fields():
+    # pylint: disable=import-outside-toplevel
+    from osbuild.util.sbom.model import ChecksumAlgorithm, RPMPackage
+
+    glibc = RPMPackage("glibc", "2.40", "1.fc41", "x86_64", vendor="Fedora Project",
+                       checksums={ChecksumAlgorithm.SHA256: "a" * 64}, filename="glibc-2.40-1.fc41.x86_64.rpm")
+    doc = sbom_pkgset_to_spdx2_doc([glibc, RPMPackage("a", "1", "1", "noarch")]).to_dict()
+    names = {p["name"]: p for p in doc["packages"]}
+    assert names["glibc"]["versionInfo"] == "2.40-1.fc41"
+    assert names["glibc"]["supplier"] == "Organization: Fedora Project"
+    assert names["glibc"]["packageFileName"] == "glibc-2.40-1.fc41.x86_64.rpm"
+    assert names["glibc"]["externalRefs"][0]["referenceLocator"].startswith("pkg:rpm/fedora/glibc@2.40-1.fc41")
+    assert names["a"]["supplier"] == "NOASSERTION"
+    assert [r["relationshipType"] for r in doc["relationships"]] == ["DESCRIBES", "DESCRIBES"]
